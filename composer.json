@@ -1,0 +1,12 @@
+{
+  "name": "exchange/services",
+  "description": "checking of exchnage web services in symfony",
+  "keywords": ["ews", "exchange"],
+  "require": {
+    "php": ">=5.3.3"
+  },
+  "autoload": {
+    "classmap": ["/lib"]
+  },
+  "target-dir": ""
+}
