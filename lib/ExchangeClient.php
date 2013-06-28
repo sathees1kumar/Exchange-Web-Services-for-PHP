@@ -190,6 +190,22 @@ class ExchangeClient {
 		$FindItem->ParentFolderIds = new stdClass();
 		$FindItem->ParentFolderIds->DistinguishedFolderId = new stdClass();
 		$FindItem->ParentFolderIds->DistinguishedFolderId->Id = $folder;
+		
+	/*$FindItem->IndexedPaViewItemView = new stdClass();
+		$FindItem->IndexedPaViewItemView->MaxEntriesReturned = 500;
+		$FindItem->IndexedPaViewItemView->Offset = 0;
+		$FindItem->IndexedPaViewItemView->BasePoint = 'End';*/
+		
+		if ($onlyunread) {
+		
+		    $FindItem->Restriction = new stdClass();
+		    $FindItem->Restriction->IsEqualTo = new stdClass();
+		    $FindItem->Restriction->IsEqualTo->FieldURI = new stdClass();
+		    $FindItem->Restriction->IsEqualTo->FieldURI->FieldURI = "message:IsRead";
+		    $FindItem->Restriction->IsEqualTo->FieldURIOrConstant = new stdClass();
+		    $FindItem->Restriction->IsEqualTo->FieldURIOrConstant->Constant = new stdClass();
+		    $FindItem->Restriction->IsEqualTo->FieldURIOrConstant->Constant->Value = 0;
+		}
 
 		if($this->delegate != NULL) {
 			$FindItem->ParentFolderIds->DistinguishedFolderId->Mailbox->EmailAddress = $this->delegate;
