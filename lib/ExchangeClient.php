@@ -509,6 +509,152 @@ class ExchangeClient {
 		}
 	}
 	
+	public function getBulkMessages($folder) {
+            
+            $this->setup();
+                         
+            $FindItem = new stdClass();
+            $FindItem->Traversal = 'Shallow';
+            
+            $FindItem->ItemShape = new stdClass();
+            $FindItem->ItemShape->BaseShape = 'IdOnly';
+            
+            $FindItem->ParentFolderIds = new stdClass();
+            $FindItem->ParentFolderIds->DistinguishedFolderId = new stdClass();
+            $FindItem->ParentFolderIds->DistinguishedFolderId->Id = $folder;
+              
+            $FindItem->IndexedPageItemView = new stdClass();
+            $FindItem->IndexedPageItemView->MaxEntriesReturned = "1000";
+            $FindItem->IndexedPageItemView->BasePoint = "Beginning";
+           
+            $isLastItem = 0;
+            $offset = "0";
+            
+            $limit = $FindItem->IndexedPageItemView->MaxEntriesReturned;
+            
+            $BaseGetItem = new stdClass();
+            $BaseGetItem->ItemShape = new stdClass();
+
+            $BaseGetItem->ItemShape->BaseShape = "Default";
+            $BaseGetItem->ItemShape->IncludeMimeContent = "true";
+            $BaseGetItem->ItemIds = new stdClass();
+            $BaseGetItem->ItemIds->ItemId = new stdClass();
+            
+            do {
+                $FindItem->IndexedPageItemView->Offset = $offset;
+                
+                $response = $this->client->FindItem($FindItem);
+                unset($FindItem);
+                $isLastItem =  $response->ResponseMessages->FindItemResponseMessage->RootFolder->IncludesLastItemInRange; 
+                $totalMessages = $response->ResponseMessages->FindItemResponseMessage->RootFolder->TotalItemsInView;
+                $remainingMessages = $totalMessages - $offset;
+            
+                if($remainingMessages > 1000) {
+                    $limit = 1000;
+                }
+                else {
+                    $limit = $remainingMessages;
+                }
+           
+                $items = $response->ResponseMessages->FindItemResponseMessage->RootFolder->Items->Message;
+                $items = array($items); 
+          
+           
+                $GetItem = clone $BaseGetItem;
+                
+                foreach($items[0] as $item) {
+                   $GetItem = clone $BaseGetItem; 
+                 
+                    //$GetItem->ItemIds->ItemId->Id= $item->ItemId->Id;
+                    $GetItem->ItemIds->ItemId->Id=$response->ResponseMessages->FindItemResponseMessage->RootFolder->Items->Message[9]->ItemId->Id;
+                    $response = $this->client->GetItem($GetItem);
+            
+                    unset($GetItem);
+                   
+                    $messageobj = $response->ResponseMessages->GetItemResponseMessage->Items->Message;
+                    
+                    $newmessage = new stdClass();
+             $newmessage->bodytext   = $messageobj->Body->_;
+                    $newmessage->bodytype   = $messageobj->Body->BodyType;
+                    $newmessage->isread     = $messageobj->IsRead;
+             $newmessage->ItemId     = $item->ItemId;
+                    
+                    if(isset($messageobj->From->Mailbox->EmailAddress)) {
+                        $newmessage->from  = $messageobj->From->Mailbox->EmailAddress;
+                    }
+                    
+                    if(isset($messageobj->From->Mailbox->Name)) {
+                        $newmessage->from_name = $messageobj->From->Mailbox->Name;
+                    }
+      
+                    if(isset($messageobj->ToRecipients)) {
+                        $newmessage->to_recipients = array();
+                        $tolist = $messageobj->ToRecipients->Mailbox;
+                        if(!is_array($tolist)) {
+                            $tolist = array($tolist);
+                        } 
+
+                        foreach($tolist as $mailbox) {
+                            $newmessage->to_recipients[] = $mailbox;
+                        }
+                    }
+   
+      $newmessage->cc_recipients = array();
+
+      if(isset($messageobj->CcRecipients->Mailbox)) {
+                        $cclist = $messageobj->CcRecipients->Mailbox;
+                        
+                        if(!is_array($cclist)) {
+                            $cclist = array($cclist);
+                        }
+
+                        foreach($cclist as $mailbox) {
+                            $newmessage->cc_recipients[] = $mailbox;
+                        }
+                        
+      }
+   
+                    $newmessage->time_sent =  $messageobj->DateTimeSent;
+                    $newmessage->time_created = $messageobj->DateTimeCreated;
+                    $newmessage->subject = $messageobj->Subject;
+                    $newmessage->has_attachments = $messageobj->HasAttachments;
+                    
+                    $newmessage->attachments = array();
+
+      if($messageobj->HasAttachments == 1) {
+                    
+                        if(property_exists($messageobj->Attachments, 'FileAttachment')) {
+
+                            if(!is_array($messageobj->Attachments->FileAttachment)) {
+                                $messageobj->Attachments->FileAttachment = array($messageobj->Attachments->FileAttachment);
+                            }
+
+                            foreach($messageobj->Attachments->FileAttachment as $attachment) {
+                                $newmessage->attachments[] = $this->get_attachment($attachment->AttachmentId);
+                            }
+                        }
+                        
+             }
+             
+      $messages[] = $newmessage;
+      return $messages;
+                    unset($newmessage);
+                    unset($messageobj);
+                    
+               }
+                
+                $offset += $limit;
+                
+                
+            
+            } while($isLastItem != 1); 
+            
+            
+            echo '<pre>';
+            print_r($messages);
+            
+        }
+	
 	/**
 	 * Tears down stream handling. Internally used.
 	 * 
