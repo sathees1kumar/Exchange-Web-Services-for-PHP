@@ -179,7 +179,7 @@ class ExchangeClient {
      * @param string $folder. (default: "inbox", other options include "sentitems", this must be a DistinguishedFolderId)
      * @return array $messages (an array of objects representing the messages)
      */
-    public function get_messages($limit = 50, $onlyunread = false, $folder = "inbox") {
+    public function get_messages($limit = 50, $onlyunread = true, $folder = "inbox") {
         $this->setup();
 
         $FindItem = new stdClass();
@@ -192,11 +192,6 @@ class ExchangeClient {
         $FindItem->ParentFolderIds->DistinguishedFolderId = new stdClass();
         $FindItem->ParentFolderIds->DistinguishedFolderId->Id = $folder;
 
-        /* $FindItem->IndexedPaViewItemView = new stdClass();
-          $FindItem->IndexedPaViewItemView->MaxEntriesReturned = 500;
-          $FindItem->IndexedPaViewItemView->Offset = 0;
-          $FindItem->IndexedPaViewItemView->BasePoint = 'End'; */
-
         if ($onlyunread) {
 
             $FindItem->Restriction = new stdClass();
@@ -208,12 +203,15 @@ class ExchangeClient {
             $FindItem->Restriction->IsEqualTo->FieldURIOrConstant->Constant->Value = 0;
         }
 
+
         if ($this->delegate != NULL) {
             $FindItem->ParentFolderIds->DistinguishedFolderId->Mailbox->EmailAddress = $this->delegate;
         }
 
         $response = $this->client->FindItem($FindItem);
-
+        echo '<pre>';
+        print_r($response);
+        exit;
         if ($response->ResponseMessages->FindItemResponseMessage->ResponseCode != "NoError") {
             $this->lastError = $response->ResponseMessages->FindItemResponseMessage->ResponseCode;
             return false;
@@ -288,7 +286,7 @@ class ExchangeClient {
             $newmessage->attachments = array();
 
             if ($messageobj->HasAttachments == 1) {
-                // TODO: support ItemAttachments
+              
                 if (property_exists($messageobj->Attachments, 'FileAttachment')) {
                     if (!is_array($messageobj->Attachments->FileAttachment)) {
                         $messageobj->Attachments->FileAttachment = array($messageobj->Attachments->FileAttachment);
@@ -431,13 +429,152 @@ class ExchangeClient {
         }
     }
 
-    public function getFolder($regex, $parent = 'inbox') {
-        foreach ($this->get_subfolders($parent) as $folder) {
-            if (preg_match(sprintf('#%s#', $regex), $folder->DisplayName))
-                return $folder;
-        }
+   
+    /**
+     * Gets all the bulk messages from the given folder
+     * 
+     * @access public
+     * @param string $folder (the name of the folder from which mails need to be fetched)
+     * @return array $messages. (Fetches all the details of the bulk mails ).
+     */
+    public function getBulkMessages($folder) {
+        $this->setup();
+        
+        //setting the parameters for finding the mail
+        $FindItem = new stdClass();
+        $FindItem->Traversal = 'Shallow';
+        $FindItem->ItemShape = new stdClass();
+        $FindItem->ItemShape->BaseShape = 'IdOnly';
+        $FindItem->ParentFolderIds = new stdClass();
+        $FindItem->ParentFolderIds->DistinguishedFolderId = new stdClass();
+        $FindItem->ParentFolderIds->DistinguishedFolderId->Id = $folder;
+        $FindItem->IndexedPageItemView = new stdClass();
+        $FindItem->IndexedPageItemView->MaxEntriesReturned = "1000";
+        $FindItem->IndexedPageItemView->BasePoint = "Beginning";
 
-        return false;
+        //setting the initial offset and islastItem
+        $isLastItem = 0;
+        $offset = "0";
+        
+        //setting the maximum limit of mails that can be fetched
+        $limit = $FindItem->IndexedPageItemView->MaxEntriesReturned;
+
+        //parameters for getting the mail 
+        $BaseGetItem = new stdClass();
+        $BaseGetItem->ItemShape = new stdClass();
+        $BaseGetItem->ItemShape->BaseShape = "Default";
+        $BaseGetItem->ItemShape->IncludeMimeContent = "true";
+        $BaseGetItem->ItemIds = new stdClass();
+        $BaseGetItem->ItemIds->ItemId = new stdClass();
+
+        do {
+            //getting the response for finding the mail
+            $FindItem->IndexedPageItemView->Offset = $offset;
+            $response = $this->client->FindItem($FindItem);
+            unset($FindItem);
+            
+            //parsing the response to get the total mails in view and checking the end of mail
+            $isLastItem = $response->ResponseMessages->FindItemResponseMessage->RootFolder->IncludesLastItemInRange;
+            $totalMessages = $response->ResponseMessages->FindItemResponseMessage->RootFolder->TotalItemsInView;
+            $remainingMessages = $totalMessages - $offset;
+
+            if($remainingMessages > 1000) {
+                $limit = 1000;
+            } 
+            else {
+                $limit = $remainingMessages;
+            }
+
+            $items = $response->ResponseMessages->FindItemResponseMessage->RootFolder->Items->Message;
+            $items = array($items);
+            
+            foreach($items[0] as $item) {
+                //getting the response for the get item based on each item id
+                $GetItem = clone $BaseGetItem;
+                $GetItem->ItemIds->ItemId->Id = $item->ItemId->Id;
+                $response = $this->client->GetItem($GetItem);
+                unset($GetItem);
+                
+                //parsing all the contents of the recieved mail
+                $messageobj = $response->ResponseMessages->GetItemResponseMessage->Items->Message;
+                $newmessage = new stdClass();
+                $newmessage->bodytext = $messageobj->Body->_;
+                $newmessage->bodytype = $messageobj->Body->BodyType;
+                $newmessage->isread = $messageobj->IsRead;
+                $newmessage->ItemId = $item->ItemId;
+
+                //checking whether the sender email address is present
+                if(isset($messageobj->From->Mailbox->EmailAddress)) {
+                    $newmessage->from = $messageobj->From->Mailbox->EmailAddress;
+                }
+                
+                //checking whether the sender name is present
+                if(isset($messageobj->From->Mailbox->Name)) {
+                    $newmessage->from_name = $messageobj->From->Mailbox->Name;
+                }
+
+                //checking whether the to recipients are present
+                if(isset($messageobj->ToRecipients)) {
+                    $newmessage->to_recipients = array();
+                    $tolist = $messageobj->ToRecipients->Mailbox;
+                    
+                    if(!is_array($tolist)) {
+                        $tolist = array($tolist);
+                    }
+
+                    foreach($tolist as $mailbox) {
+                        $newmessage->to_recipients[] = $mailbox;
+                    }
+                }
+
+                $newmessage->cc_recipients = array();
+
+                //checking for the cc-recipients
+                if(isset($messageobj->CcRecipients->Mailbox)) {
+                    $cclist = $messageobj->CcRecipients->Mailbox;
+
+                    if(!is_array($cclist)) {
+                        $cclist = array($cclist);
+                    }
+
+                    foreach($cclist as $mailbox) {
+                        $newmessage->cc_recipients[] = $mailbox;
+                    }
+                }
+
+                //parsing the subject of the mail, time 
+                $newmessage->time_sent = $messageobj->DateTimeSent;
+                $newmessage->time_created = $messageobj->DateTimeCreated;
+                $newmessage->subject = $messageobj->Subject;
+                
+                //checking whether the mail has any attachments
+                $newmessage->has_attachments = $messageobj->HasAttachments;
+                $newmessage->attachments = array();
+
+                if($messageobj->HasAttachments == 1) {
+
+                    if(property_exists($messageobj->Attachments, 'FileAttachment')) {
+
+                        if(!is_array($messageobj->Attachments->FileAttachment)) {
+                            $messageobj->Attachments->FileAttachment = array($messageobj->Attachments->FileAttachment);
+                        }
+
+                        foreach($messageobj->Attachments->FileAttachment as $attachment) {
+                            $newmessage->attachments[] = $this->get_attachment($attachment->AttachmentId);
+                        }
+                    }
+                }
+
+                //passing the new parsed mail to the array
+                $messages[] = $newmessage;
+                unset($newmessage);
+                unset($messageobj);
+            }
+
+            $offset += $limit;
+        } while($isLastItem != 1);
+            
+        return $messages;
     }
 
     /**
@@ -466,7 +603,9 @@ class ExchangeClient {
             $FolderItem->ParentFolderIds->FolderId->Id = $ParentFolderId;
         }
 
+
         $response = $this->client->FindFolder($FolderItem);
+
 
         if ($response->ResponseMessages->FindFolderResponseMessage->ResponseCode == "NoError") {
             $folders = array();
@@ -508,146 +647,6 @@ class ExchangeClient {
         if (!stream_wrapper_register('https', 'ExchangeNTLMStream')) {
             throw new Exception("Failed to register protocol");
         }
-    }
-
-    public function getBulkMessages($folder) {
-
-        $this->setup();
-
-        $FindItem = new stdClass();
-        $FindItem->Traversal = 'Shallow';
-
-        $FindItem->ItemShape = new stdClass();
-        $FindItem->ItemShape->BaseShape = 'IdOnly';
-
-        $FindItem->ParentFolderIds = new stdClass();
-        $FindItem->ParentFolderIds->DistinguishedFolderId = new stdClass();
-        $FindItem->ParentFolderIds->DistinguishedFolderId->Id = $folder;
-
-        $FindItem->IndexedPageItemView = new stdClass();
-        $FindItem->IndexedPageItemView->MaxEntriesReturned = "1000";
-        $FindItem->IndexedPageItemView->BasePoint = "Beginning";
-
-        $isLastItem = 0;
-        $offset = "0";
-
-        $limit = $FindItem->IndexedPageItemView->MaxEntriesReturned;
-
-        $BaseGetItem = new stdClass();
-        $BaseGetItem->ItemShape = new stdClass();
-
-        $BaseGetItem->ItemShape->BaseShape = "Default";
-        $BaseGetItem->ItemShape->IncludeMimeContent = "true";
-        $BaseGetItem->ItemIds = new stdClass();
-        $BaseGetItem->ItemIds->ItemId = new stdClass();
-
-        do {
-            $FindItem->IndexedPageItemView->Offset = $offset;
-
-            $response = $this->client->FindItem($FindItem);
-            unset($FindItem);
-            $isLastItem = $response->ResponseMessages->FindItemResponseMessage->RootFolder->IncludesLastItemInRange;
-            $totalMessages = $response->ResponseMessages->FindItemResponseMessage->RootFolder->TotalItemsInView;
-            $remainingMessages = $totalMessages - $offset;
-
-            if ($remainingMessages > 1000) {
-                $limit = 1000;
-            } else {
-                $limit = $remainingMessages;
-            }
-
-            $items = $response->ResponseMessages->FindItemResponseMessage->RootFolder->Items->Message;
-            $items = array($items);
-
-
-            $GetItem = clone $BaseGetItem;
-
-            foreach ($items[0] as $item) {
-                $GetItem = clone $BaseGetItem;
-
-                //  $GetItem->ItemIds->ItemId->Id= $item->ItemId->Id;
-                $GetItem->ItemIds->ItemId->Id = $response->ResponseMessages->FindItemResponseMessage->RootFolder->Items->Message[9]->ItemId->Id;
-                $response = $this->client->GetItem($GetItem);
-
-                unset($GetItem);
-
-                $messageobj = $response->ResponseMessages->GetItemResponseMessage->Items->Message;
-
-                $newmessage = new stdClass();
-                $newmessage->bodytext = $messageobj->Body->_;
-                $newmessage->bodytype = $messageobj->Body->BodyType;
-                $newmessage->isread = $messageobj->IsRead;
-                $newmessage->ItemId = $item->ItemId;
-
-                if (isset($messageobj->From->Mailbox->EmailAddress)) {
-                    $newmessage->from = $messageobj->From->Mailbox->EmailAddress;
-                }
-
-                if (isset($messageobj->From->Mailbox->Name)) {
-                    $newmessage->from_name = $messageobj->From->Mailbox->Name;
-                }
-
-                if (isset($messageobj->ToRecipients)) {
-                    $newmessage->to_recipients = array();
-                    $tolist = $messageobj->ToRecipients->Mailbox;
-                    if (!is_array($tolist)) {
-                        $tolist = array($tolist);
-                    }
-
-                    foreach ($tolist as $mailbox) {
-                        $newmessage->to_recipients[] = $mailbox;
-                    }
-                }
-
-                $newmessage->cc_recipients = array();
-
-                if (isset($messageobj->CcRecipients->Mailbox)) {
-                    $cclist = $messageobj->CcRecipients->Mailbox;
-
-                    if (!is_array($cclist)) {
-                        $cclist = array($cclist);
-                    }
-
-                    foreach ($cclist as $mailbox) {
-                        $newmessage->cc_recipients[] = $mailbox;
-                    }
-                }
-
-                $newmessage->time_sent = $messageobj->DateTimeSent;
-                $newmessage->time_created = $messageobj->DateTimeCreated;
-                $newmessage->subject = $messageobj->Subject;
-                $newmessage->has_attachments = $messageobj->HasAttachments;
-
-                $newmessage->attachments = array();
-
-                if ($messageobj->HasAttachments == 1) {
-
-                    if (property_exists($messageobj->Attachments, 'FileAttachment')) {
-
-                        if (!is_array($messageobj->Attachments->FileAttachment)) {
-                            $messageobj->Attachments->FileAttachment = array($messageobj->Attachments->FileAttachment);
-                        }
-
-                        foreach ($messageobj->Attachments->FileAttachment as $attachment) {
-                            $newmessage->attachments[] = $this->get_attachment($attachment->AttachmentId);
-                        }
-                    }
-                }
-
-                echo 'hi ';
-
-                $messages[] = $newmessage;
-                return $messages;
-                unset($newmessage);
-                unset($messageobj);
-            }
-
-            $offset += $limit;
-        } while ($isLastItem != 1);
-        return $messages;
-
-        echo '<pre>';
-        print_r($messages);
     }
 
     /**
