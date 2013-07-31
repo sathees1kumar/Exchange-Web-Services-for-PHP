@@ -593,7 +593,7 @@ class ExchangeClient {
         $FindItem->ParentFolderIds = new stdClass();
         $FindItem->ParentFolderIds->DistinguishedFolderId = new stdClass();
         $FindItem->ParentFolderIds->DistinguishedFolderId->Id = $folder;
-        
+
         $FindItem->SortOrder = new stdClass();
         $FindItem->SortOrder->FieldOrder = new stdClass();
         $FindItem->SortOrder->FieldOrder->Order = "Ascending";
@@ -618,9 +618,9 @@ class ExchangeClient {
         
         //if there is more than one message to fetch 
         if (!is_array($items)) {
-            $items = array($items);			
+            $items = array($items);
         }
-       
+        
         foreach($items as $item) {
                 //getting the response for the get item based on each item id
                 $GetItem = new stdClass();
@@ -702,6 +702,64 @@ class ExchangeClient {
                         if(!is_array($messageobj->Attachments->FileAttachment)) {
                             $messageobj->Attachments->FileAttachment = array($messageobj->Attachments->FileAttachment);
                         }
+                    }
+                }
+
+                //checking whether the sender email address is present
+                if(isset($messageobj->From->Mailbox->EmailAddress)) {
+                    $newmessage->from = $messageobj->From->Mailbox->EmailAddress;
+                }
+                
+                //checking whether the sender name is present
+                if(isset($messageobj->From->Mailbox->Name)) {
+                    $newmessage->from_name = $messageobj->From->Mailbox->Name;
+                }
+
+                //checking whether the to recipients are present
+                if(isset($messageobj->ToRecipients)) {
+                    $newmessage->to_recipients = array();
+                    $tolist = $messageobj->ToRecipients->Mailbox;
+                    
+                    if(!is_array($tolist)) {
+                        $tolist = array($tolist);
+                    }
+
+                    foreach($tolist as $mailbox) {
+                        $newmessage->to_recipients[] = $mailbox;
+                    }
+                }
+
+                $newmessage->cc_recipients = array();
+
+                //checking for the cc-recipients
+                if(isset($messageobj->CcRecipients->Mailbox)) {
+                    $cclist = $messageobj->CcRecipients->Mailbox;
+
+                    if(!is_array($cclist)) {
+                        $cclist = array($cclist);
+                    }
+
+                    foreach($cclist as $mailbox) {
+                        $newmessage->cc_recipients[] = $mailbox;
+                    }
+                }
+
+                //parsing the subject of the mail, time 
+                $newmessage->time_sent = $messageobj->DateTimeSent;
+                $newmessage->time_created = $messageobj->DateTimeCreated;
+                $newmessage->subject = $messageobj->Subject;
+                
+                //checking whether the mail has any attachments
+                $newmessage->has_attachments = $messageobj->HasAttachments;
+                $newmessage->attachments = array();
+
+                if($messageobj->HasAttachments == 1) {
+
+                    if(property_exists($messageobj->Attachments, 'FileAttachment')) {
+
+                        if(!is_array($messageobj->Attachments->FileAttachment)) {
+                            $messageobj->Attachments->FileAttachment = array($messageobj->Attachments->FileAttachment);
+                        }
 
                         foreach($messageobj->Attachments->FileAttachment as $attachment) {
                             $newmessage->attachments[] = $this->get_attachment($attachment->AttachmentId);
@@ -722,7 +780,7 @@ class ExchangeClient {
             else {
                 return $messages;
             }    
- 
+        
     }
     
     
