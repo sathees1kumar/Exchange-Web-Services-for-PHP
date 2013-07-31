@@ -618,8 +618,7 @@ class ExchangeClient {
         
         //if there is more than one message to fetch 
         if (!is_array($items)) {
-            $items = array($items);
-			
+            $items = array($items);			
         }
        
         foreach($items as $item) {
